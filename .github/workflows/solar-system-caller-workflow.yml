@@ -42,16 +42,21 @@ jobs:
           with:
             node-version: ${{ matrix.nodejs_version }}
 
-        - name: Caching NPM Dependencies
-          uses: actions/cache@v3
-          with:
-            path: node_modules
-            key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+        # - name: Caching NPM Dependencies
+        #   uses: actions/cache@v3
+        #   with:
+        #     path: node_modules
+        #     key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
 
 
-        - name: Install Dependencies
-          run: npm install
+        # - name: Install Dependencies
+        #   run: npm install
     
+        - name: Composite Action - Cache & Install NPM Packages
+          uses: ./.github/custom-actions/npm-actions
+          with:
+            path-to-folder: node_modules
+
         - name: Unit Testing
           id: unit-testing-id
           run: npm test
@@ -87,14 +92,19 @@ jobs:
       #   with:
       #     node-version: 18
 
-      - name: Caching NPM Dependencies
-        uses: actions/cache@v3
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      # - name: Caching NPM Dependencies
+      #   uses: actions/cache@v3
+      #   with:
+      #     path: node_modules
+      #     key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
 
-      - name: Install Dependencies
-        run: npm install
+      # - name: Install Dependencies
+      #   run: npm install
+
+      - name: Composite Action - Cache & Install NPM Packages
+        uses: ./.github/custom-actions/npm-actions
+        with:
+          path-to-folder: node_modules
 
       - name: Check Code Coverage
         continue-on-error: true
@@ -106,6 +116,42 @@ jobs:
           name: Code-Coverage-Result
           path: coverage
           retention-days: 5
+
+    reports-s3:
+      needs: [code-coverage, unit-testing]
+      name: AWS S3 - Upload Reports
+      runs-on: ubuntu-latest
+      continue-on-error: true
+      steps:
+      - name: Download Mocha Test Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: Mocha-Test-Result
+
+      - name: Download Code Coverage Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: Code-Coverage-Result
+
+      - name: Merge Test Files
+        run: |
+          ls -ltr
+          mkdir reports-${{ github.sha }}
+          mv corbetura-coverage.xml reports-${{ github.sha }}/
+          mv test-results.xml reports-${{ github.sha }}/
+          ls -ltr reports-${{ github.sha }}/
+
+      - name: Upload to AWS S3
+        uses: jakejarvis/s3-sync-action@master
+        with:
+          args: --acl public-read --follow-symlinks --delete
+        env:
+          AWS_S3_BUCKET: solar-system-reports-bucket
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: 'us-east-1'
+          SOURCE_DIR: 'reports-${{ github.sha }}'
+          DEST_DIR: 'reports-${{ github.sha }}'
 
     docker:
       name: Containerization
@@ -165,7 +211,14 @@ jobs:
     dev-deploy:
       if: contains(github.ref, 'feature/')
       needs: docker
-      uses: ./.github/workflows/reuse-depoyment.yml
+      uses: ./.github/workflows/reuse-deplyment.yml
+      secrets:
+        k8s-kubeconfig: ${{ secrets.KUBECONFIG }}
+        mongodb-password: ${{ secrets.MONGODB_PASSWORD }}
+      with:
+        mongodb-uri: ${{ vars.MONGO_URI }}
+        environment: development
+        k8s-manifest-dir: kubernetes/development/
 
     dev-integration-testing:
       if: contains(github.ref, 'feature/')
@@ -175,7 +228,7 @@ jobs:
       steps:
       - name: Test URL Output Using Curl and Jq
         env:
-          URL: ${{ needs.dev-deploy.outputs.APP_INGRESS_URL}}
+          URL: ${{ needs.dev-deploy.outputs.application-url}}
         run: |
           echo $URL
           echo -----------------------------------------------------
@@ -185,6 +238,13 @@ jobs:
       if: github.ref == 'refs/heads/main'
       needs: docker
       uses: ./.github/workflows/reuse-depoyment.yml
+      secrets:
+        k8s-kubeconfig: ${{ secrets.KUBECONFIG }}
+        mongodb-password: ${{ secrets.MONGODB_PASSWORD }}
+      with:
+        mongodb-uri: ${{ vars.MONGO_URI }}
+        environment: production
+        k8s-manifest-dir: kubernetes/production/
 
     prod-integration-testing:
       if: github.ref == 'refs/heads/main'
@@ -194,8 +254,26 @@ jobs:
       steps:
       - name: Test URL Output Using Curl and Jq
         env:
-          URL: ${{ needs.prod-deploy.outputs.APP_INGRESS_URL}}
+          URL: ${{ needs.prod-deploy.outputs.application-url}}
         run: |
           echo $URL
           echo -----------------------------------------------------
           curl https://$URL/live -s -k | jq -r .status | grep -i live
+
+    slack-notification:
+      if: always()
+      name: Slack Notification
+      needs: [dev-integration-testing, prod-integration-testing]
+      continue-on-error: true
+      runs-on: ubuntu-latest
+      steps:
+      - uses: actions/checkout@v4
+      - name: Slack Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}     # Add Slack webhook in github repo secrets
+          SLACK_CHANNEL: github-actions-channel
+          SLACK_COLOR: ${{ job.status }}    # or a specific color like 'good' or '#ff00ff'
+          SLACK_ICON: https://gitlab.com/sidd-harth/solar-system/-/raw/main/images/saturn.png
+          SLACK_MESSAGE: ':hammer_and_wrench; Triggered By ${{ github.actor }}'
+          SLACK_TITLE: Information

